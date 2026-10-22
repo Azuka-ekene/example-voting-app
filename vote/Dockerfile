@@ -3,8 +3,8 @@ FROM python:3.11-slim@sha256:e88e9763f943ec1834f992a4b51e0f24500486803e8bc534e57
 RUN apt-get update && \
     apt-get install -y --no-install-recommends curl && \
     rm -rf /var/lib/apt/lists/* && \
-    groupadd --system appgroup && \
-    useradd --system --gid appgroup --create-home appuser
+    groupadd --system --gid 10001 appgroup && \
+    useradd --system --uid 10001 --gid appgroup --create-home appuser
 
 WORKDIR /usr/local/app
 
@@ -19,7 +19,7 @@ RUN pip install --no-cache-dir watchdog
 
 ENV FLASK_ENV=development
 
-USER appuser
+USER 10001:10001
 
 CMD ["python", "app.py"]
 
@@ -27,8 +27,8 @@ FROM base AS final
 
 COPY --chown=appuser:appgroup . .
 
-USER appuser
+USER 10001:10001
 
-EXPOSE 80
+EXPOSE 8080
 
-CMD ["gunicorn", "app:app", "-b", "0.0.0.0:80", "--log-file", "-", "--access-logfile", "-", "--workers", "4", "--keep-alive", "0"]
+CMD ["gunicorn", "app:app", "-b", "0.0.0.0:8080", "--log-file", "-", "--access-logfile", "-", "--workers", "4", "--keep-alive", "0"]

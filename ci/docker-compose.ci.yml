@@ -1,0 +1,68 @@
+# Used ONLY by the CI smoke test (ci/smoke-test.sh).
+# It builds the same production images that the pipeline ships, not the dev variants.
+# The postgres/postgres login is a throwaway test credential. It has to match the
+# values that the sample app has hard-coded in worker/Program.cs and result/server.js.
+
+services:
+  vote:
+    build:
+      context: ../vote
+      target: final
+    ports:
+      - "8080:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - front-tier
+      - back-tier
+
+  result:
+    build:
+      context: ../result
+    ports:
+      - "8081:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - front-tier
+      - back-tier
+
+  worker:
+    build:
+      context: ../worker
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    networks:
+      - back-tier
+
+  redis:
+    image: redis:alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - back-tier
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - back-tier
+
+networks:
+  front-tier:
+  back-tier:

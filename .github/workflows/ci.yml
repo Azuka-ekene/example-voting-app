@@ -1,0 +1,113 @@
+name: CI
+
+# Every push: test -> scan -> build -> push (images are tagged with the commit SHA).
+on:
+  push:
+  workflow_dispatch:
+
+# Least privilege by default. Only the push job below gets extra rights.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: End-to-end smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build and start the whole app
+        run: docker compose -f ci/docker-compose.ci.yml up -d --build --wait
+
+      - name: Cast a vote and check it is counted
+        run: bash ci/smoke-test.sh
+
+      - name: Show logs if something failed
+        if: failure()
+        run: docker compose -f ci/docker-compose.ci.yml logs --no-color
+
+      - name: Clean up
+        if: always()
+        run: docker compose -f ci/docker-compose.ci.yml down -v
+
+  build-scan-push:
+    name: ${{ matrix.service }} - build, scan, push
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # lets the built-in token push to ghcr.io
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [vote, result, worker]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Work out the image name (GHCR needs lowercase)
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/example-voting-app-${{ matrix.service }}" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Work out the tags (short and full commit SHA)
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=sha,prefix=,format=short
+            type=raw,value=${{ github.sha }}
+
+      # Build first and keep the image local, so it can be scanned before anything is pushed.
+      - name: Build image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./${{ matrix.service }}
+          load: true
+          push: false
+          tags: local/${{ matrix.service }}:scan
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      # The Trivy action is pinned to a full commit SHA on purpose: in March 2026 most of its
+      # version tags were hijacked, and v0.35.0 was the one release confirmed unaffected.
+      - name: Trivy report (HIGH and CRITICAL, informational)
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: local/${{ matrix.service }}:scan
+          version: v0.69.3
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '0'
+
+      - name: Trivy gate (fails the pipeline on fixable CRITICAL vulnerabilities)
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: local/${{ matrix.service }}:scan
+          version: v0.69.3
+          format: table
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Push the exact image that was scanned, so there is no second build.
+      - name: Push the scanned image
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          for tag in $TAGS; do
+            docker tag "local/${{ matrix.service }}:scan" "$tag"
+            docker push "$tag"
+          done
