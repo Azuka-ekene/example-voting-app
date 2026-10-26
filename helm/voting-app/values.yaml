@@ -1,0 +1,59 @@
+# The ONE values file for the whole app.
+# image.tag is the short commit SHA that the CI pipeline pushed. Pass it at install time:
+#   --set image.tag=<short-sha>
+
+image:
+  registry: ghcr.io/azuka-ekene
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# Applied to vote, result and worker: never root, no extra powers.
+securityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  capabilities:
+    drop: ["ALL"]
+
+vote:
+  repository: example-voting-app-vote
+  tag: ""            # empty = use image.tag
+  replicas: 2
+  port: 8080
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 256Mi }
+
+result:
+  repository: example-voting-app-result
+  tag: ""
+  replicas: 1
+  port: 8080
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 256Mi }
+
+worker:
+  repository: example-voting-app-worker
+  tag: ""
+  replicas: 1
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 256Mi }
+
+redis:
+  image: redis:7-alpine
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+    limits: { memory: 128Mi }
+
+db:
+  image: postgres:15-alpine
+  # Throwaway test login. The sample app has postgres/postgres hard-coded in its source,
+  # so the database must use the same. Nothing real is stored here.
+  user: postgres
+  password: postgres
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 256Mi }

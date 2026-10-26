@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: result
+  labels:
+    app: result
+spec:
+  replicas: {{ .Values.result.replicas }}
+  selector:
+    matchLabels:
+      app: result
+  template:
+    metadata:
+      labels:
+        app: result
+    spec:
+      containers:
+        - name: result
+          image: "{{ .Values.image.registry }}/{{ .Values.result.repository }}:{{ .Values.result.tag | default (required "Set image.tag, e.g. --set image.tag=<short-sha>" .Values.image.tag) }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.result.port }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.result.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.result.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: result
+  labels:
+    app: result
+spec:
+  selector:
+    app: result
+  ports:
+    - port: 80
+      targetPort: {{ .Values.result.port }}
